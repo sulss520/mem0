@@ -5,7 +5,8 @@ LABEL org.opencontainers.image.name="mem0/openmemory-mcp"
 WORKDIR /usr/src/openmemory
 
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+# 使用腾讯云镜像源加速 pip 安装
+RUN pip install -r requirements.txt -i https://mirrors.cloud.tencent.com/pypi/simple --trusted-host mirrors.cloud.tencent.com
 
 COPY config.json .
 COPY . .

@@ -5,12 +5,10 @@ import { EmbeddingConfig } from "../types";
 export class OpenAIEmbedder implements Embedder {
   private openai: OpenAI;
   private model: string;
-  private embeddingDims?: number;
 
   constructor(config: EmbeddingConfig) {
     this.openai = new OpenAI({ apiKey: config.apiKey });
     this.model = config.model || "text-embedding-3-small";
-    this.embeddingDims = config.embeddingDims || 1536;
   }
 
   async embed(text: string): Promise<number[]> {

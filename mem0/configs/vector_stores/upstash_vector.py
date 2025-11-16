@@ -1,7 +1,7 @@
 import os
 from typing import Any, ClassVar, Dict, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 try:
     from upstash_vector import Index
@@ -31,4 +31,6 @@ class UpstashVectorConfig(BaseModel):
             raise ValueError("Either a client or URL and token must be provided.")
         return values
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = {
+        "arbitrary_types_allowed": True,
+    }

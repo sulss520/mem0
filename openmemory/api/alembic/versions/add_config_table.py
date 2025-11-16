@@ -21,8 +21,8 @@ def upgrade():
     # Create configs table if it doesn't exist
     op.create_table(
         'configs',
-        sa.Column('id', sa.UUID(), nullable=False, default=lambda: uuid.uuid4()),
-        sa.Column('key', sa.String(), nullable=False),
+        sa.Column('id', sa.String(32), nullable=False, default=lambda: uuid.uuid4()),
+        sa.Column('key', sa.String(255), nullable=False),
         sa.Column('value', sa.JSON(), nullable=False),
         sa.Column('created_at', sa.DateTime(), nullable=True),
         sa.Column('updated_at', sa.DateTime(), nullable=True),

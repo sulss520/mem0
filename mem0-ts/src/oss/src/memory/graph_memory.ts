@@ -89,7 +89,7 @@ export class MemoryGraph {
 
     this.llm = LLMFactory.create(this.llmProvider, this.config.llm.config);
     this.structuredLlm = LLMFactory.create(
-      this.llmProvider,
+      "openai_structured",
       this.config.llm.config,
     );
     this.threshold = 0.7;

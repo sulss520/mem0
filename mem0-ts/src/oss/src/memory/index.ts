@@ -242,12 +242,7 @@ export class Memory {
     const parsedMessages = messages.map((m) => m.content).join("\n");
 
     const [systemPrompt, userPrompt] = this.customPrompt
-      ? [
-          this.customPrompt.toLowerCase().includes("json")
-            ? this.customPrompt
-            : `${this.customPrompt}\n\nYou MUST return a valid JSON object with a 'facts' key containing an array of strings.`,
-          `Input:\n${parsedMessages}`,
-        ]
+      ? [this.customPrompt, `Input:\n${parsedMessages}`]
       : getFactRetrievalMessages(parsedMessages);
 
     const response = await this.llm.generateResponse(

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, validator
+from pydantic import BaseModel, Field, validator
 
 
 class MemoryBase(BaseModel):
@@ -33,7 +33,8 @@ class Memory(MemoryBase):
     categories: Optional[List[Category]] = None
     app: App
 
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        from_attributes = True
 
 class MemoryUpdate(BaseModel):
     content: Optional[str] = None

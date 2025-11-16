@@ -465,7 +465,7 @@ class Databricks(VectorStoreBase):
 
             # Parse results
             result_data = sdk_results.result if hasattr(sdk_results, "result") else sdk_results
-            data_array = result_data.data_array if getattr(result_data, "data_array", None) else []
+            data_array = result_data.data_array if hasattr(result_data, "data_array") else []
 
             memory_results = []
             for row in data_array:
@@ -589,8 +589,7 @@ class Databricks(VectorStoreBase):
                 raise KeyError(f"Vector with ID {vector_id} not found")
 
             result = data_array[0]
-            columns = columns = [col.name for col in results.manifest.columns] if results.manifest and results.manifest.columns else []
-            row_data = dict(zip(columns, result))
+            row_data = result if isinstance(result, dict) else result.__dict__
 
             # Build payload following the standard schema
             payload = {
@@ -609,7 +608,7 @@ class Databricks(VectorStoreBase):
                     payload[field] = row_data[field]
 
             # Add metadata
-            if "metadata" in row_data and row_data.get('metadata'):
+            if "metadata" in row_data:
                 try:
                     metadata = json.loads(extract_json(row_data["metadata"]))
                     payload.update(metadata)
@@ -708,9 +707,8 @@ class Databricks(VectorStoreBase):
                     except Exception:
                         pass
                 memory_id = row_dict.get("memory_id") or row_dict.get("id")
-                payload['data'] = payload['memory']
                 memory_results.append(MemoryResult(id=memory_id, payload=payload))
-            return [memory_results]
+            return memory_results
         except Exception as e:
             logger.error(f"Failed to list memories: {e}")
             return []

@@ -1,7 +1,6 @@
 import dotenv from "dotenv";
 import { demoMemoryStore } from "./memory";
 import { demoSupabase } from "./supabase";
-import { demoAzureAISearch } from "./azure-ai-search";
 // import { demoQdrant } from "./qdrant";
 // import { demoRedis } from "./redis";
 // import { demoPGVector } from "./pgvector";
@@ -16,7 +15,6 @@ async function main() {
   const stores: Record<string, () => Promise<void>> = {
     // memory: demoMemoryStore,
     supabase: demoSupabase,
-    "azure-ai-search": demoAzureAISearch,
     // Uncomment these as they are implemented
     // qdrant: demoQdrant,
     // redis: demoRedis,

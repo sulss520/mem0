@@ -6,7 +6,6 @@ import { logger } from "../utils/logger";
 export class OllamaEmbedder implements Embedder {
   private ollama: Ollama;
   private model: string;
-  private embeddingDims?: number;
   // Using this variable to avoid calling the Ollama server multiple times
   private initialized: boolean = false;
 
@@ -15,7 +14,6 @@ export class OllamaEmbedder implements Embedder {
       host: config.url || "http://localhost:11434",
     });
     this.model = config.model || "nomic-embed-text:latest";
-    this.embeddingDims = config.embeddingDims || 768;
     this.ensureModelExists().catch((err) => {
       logger.error(`Error ensuring model exists: ${err}`);
     });

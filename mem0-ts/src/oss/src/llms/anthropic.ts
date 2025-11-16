@@ -39,12 +39,7 @@ export class AnthropicLLM implements LLM {
       max_tokens: 4096,
     });
 
-    const firstBlock = response.content[0];
-    if (firstBlock.type === "text") {
-      return firstBlock.text;
-    } else {
-      throw new Error("Unexpected response type from Anthropic API");
-    }
+    return response.content[0].text;
   }
 
   async generateChat(messages: Message[]): Promise<LLMResponse> {
