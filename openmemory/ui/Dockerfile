@@ -14,7 +14,9 @@ FROM base AS deps
 
 COPY package.json pnpm-lock.yaml ./
 
-RUN pnpm install --frozen-lockfile
+# 使用腾讯云 npm 镜像源加速安装
+RUN pnpm config set registry https://mirrors.cloud.tencent.com/npm/ && \
+    pnpm install --frozen-lockfile
 
 FROM base AS builder
 WORKDIR /app

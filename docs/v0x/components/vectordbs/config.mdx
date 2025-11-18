@@ -8,7 +8,7 @@ iconType: "solid"
 
 The `config` is defined as an object with two main keys:
 - `vector_store`: Specifies the vector database provider and its configuration
-  - `provider`: The name of the vector database (e.g., "chroma", "pgvector", "qdrant", "milvus", "upstash_vector", "azure_ai_search", "vertex_ai_vector_search", "valkey")
+  - `provider`: The name of the vector database (e.g., "chroma", "pgvector", "qdrant", "milvus", "upstash_vector", "azure_ai_search", "vertex_ai_vector_search", "valkey", "tencent_vectordb")
   - `config`: A nested dictionary containing provider-specific settings
 
 
@@ -96,6 +96,12 @@ Here's a comprehensive list of all parameters that can be used across different 
 | `connection_string` | PostgreSQL connection string (for Supabase/PGVector) |
 | `index_method` | Vector index method (for Supabase) |
 | `index_measure` | Distance measure for similarity search (for Supabase) |
+| `database_name` | Name of the database (for Tencent VectorDB/Baidu VectorDB) |
+| `table_name` | Name of the table (for Baidu VectorDB) |
+| `account` | Account name (for Baidu VectorDB) |
+| `endpoint` | Endpoint URL (for Baidu VectorDB) |
+| `key` | API key (for Tencent VectorDB) |
+| `timeout` | Connection timeout in seconds (for Tencent VectorDB) |
 </Tab>
 <Tab title="TypeScript">
 | Parameter | Description |

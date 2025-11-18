@@ -26,6 +26,12 @@ from sqlalchemy.orm import Session, joinedload
 
 router = APIRouter(prefix="/api/v1/memories", tags=["memories"])
 
+# 记忆事件类型常量
+MEMORY_EVENT_ADD = "ADD"
+MEMORY_EVENT_UPDATE = "UPDATE"
+MEMORY_EVENT_DELETE = "DELETE"
+MEMORY_EVENT_NONE = "NONE"
+
 
 def get_memory_or_404(db: Session, memory_id: UUID) -> Memory:
     memory = db.query(Memory).filter(Memory.id == memory_id).first()
@@ -55,6 +61,84 @@ def update_memory_state(db: Session, memory_id: UUID, new_state: MemoryState, us
     db.add(history)
     db.commit()
     return memory
+
+
+# 事件处理函数
+def _create_or_update_memory(memory_id, existing_memory, user, app_obj, request, result, db, old_state=None):
+    """创建或更新记忆"""
+    if existing_memory:
+        existing_memory.state = MemoryState.active
+        existing_memory.content = result['memory']
+        return existing_memory, existing_memory.state if old_state is None else old_state
+    
+    memory = Memory(
+        id=memory_id,
+        user_id=user.id,
+        app_id=app_obj.id,
+        content=result['memory'],
+        metadata_=request.metadata,
+        state=MemoryState.active
+    )
+    db.add(memory)
+    return memory, MemoryState.active
+
+
+def _handle_add_event(result, memory_id, existing_memory, user, app_obj, request, db, **kwargs):
+    """处理 ADD 事件"""
+    memory, old_state = _create_or_update_memory(memory_id, existing_memory, user, app_obj, request, result, db)
+    
+    db.add(MemoryStatusHistory(
+        memory_id=memory_id,
+        changed_by=user.id,
+        old_state=old_state,
+        new_state=MemoryState.active
+    ))
+    return memory, "created"
+
+
+def _handle_update_event(result, memory_id, existing_memory, user, app_obj, request, db, **kwargs):
+    """处理 UPDATE 事件"""
+    memory, old_state = _create_or_update_memory(memory_id, existing_memory, user, app_obj, request, result, db, MemoryState.active)
+    action = "updated" if existing_memory else "created"
+    
+    db.add(MemoryStatusHistory(
+        memory_id=memory_id,
+        changed_by=user.id,
+        old_state=old_state,
+        new_state=MemoryState.active
+    ))
+    return memory, action
+
+
+def _handle_delete_event(result, memory_id, existing_memory, user, app_obj=None, request=None, db=None, **kwargs):
+    """处理 DELETE 事件"""
+    if not existing_memory:
+        return None, "skipped"
+    
+    existing_memory.state = MemoryState.deleted
+    existing_memory.deleted_at = datetime.now(UTC)
+    
+    db.add(MemoryStatusHistory(
+        memory_id=memory_id,
+        changed_by=user.id,
+        old_state=MemoryState.active,
+        new_state=MemoryState.deleted
+    ))
+    return existing_memory, "deleted"
+
+
+def _handle_none_event(result=None, memory_id=None, existing_memory=None, user=None, app_obj=None, request=None, db=None, **kwargs):
+    """处理 NONE 事件"""
+    return None, "skipped"
+
+
+# 事件处理函数映射
+EVENT_HANDLERS = {
+    MEMORY_EVENT_ADD: _handle_add_event,
+    MEMORY_EVENT_UPDATE: _handle_update_event,
+    MEMORY_EVENT_DELETE: _handle_delete_event,
+    MEMORY_EVENT_NONE: _handle_none_event,
+}
 
 
 def get_accessible_memory_ids(db: Session, app_id: UUID) -> Set[UUID]:
@@ -240,23 +324,43 @@ async def create_memory(
         raise HTTPException(status_code=403, detail=f"App {request.app} is currently paused on OpenMemory. Cannot create new memories.")
 
     # Log what we're about to do
-    logging.info(f"Creating memory for user_id: {request.user_id} with app: {request.app}")
+    logging.info("=" * 80)
+    logging.info(f"📝 [MEMORY CREATE] 开始创建记忆")
+    logging.info(f"   User ID: {request.user_id}")
+    logging.info(f"   App: {request.app}")
+    logging.info(f"   Text: {request.text[:100]}..." if len(request.text) > 100 else f"   Text: {request.text}")
+    logging.info("=" * 80)
     
     # Try to get memory client safely
     try:
         memory_client = get_memory_client()
         if not memory_client:
             raise Exception("Memory client is not available")
+        
+        # 检查 graph store 状态
+        enable_graph = getattr(memory_client, 'enable_graph', False)
+        has_graph = getattr(memory_client, 'graph', None) is not None
+        logging.info(f"✅ [MEMORY CLIENT] Memory client 已就绪")
+        logging.info(f"   enable_graph: {enable_graph}")
+        logging.info(f"   graph 实例存在: {has_graph}")
+        
     except Exception as client_error:
-        logging.warning(f"Memory client unavailable: {client_error}. Creating memory in database only.")
+        logging.error(f"❌ [MEMORY CLIENT] Memory client 不可用: {client_error}")
+        logging.warning("   将仅在数据库中创建记录（无向量存储和图形存储）")
         # Return a json response with the error
         return {
             "error": str(client_error)
         }
 
-    # Try to save to Qdrant via memory_client
+    # Try to save to vector store and graph store via memory_client
     try:
-        qdrant_response = memory_client.add(
+        import time
+        start_time = time.time()
+        
+        logging.info("🚀 [VECTOR STORE] 开始写入向量数据库...")
+        logging.info(f"   文本长度: {len(request.text)} 字符")
+        
+        mem0_response = memory_client.add(
             request.text,
             user_id=request.user_id,  # Use string user_id to match search
             metadata={
@@ -265,63 +369,216 @@ async def create_memory(
             }
         )
         
-        # Log the response for debugging
-        logging.info(f"Qdrant response: {qdrant_response}")
+        elapsed_time = time.time() - start_time
+        logging.info(f"✅ [VECTOR STORE] 向量数据库写入完成 (耗时: {elapsed_time:.2f}秒)")
         
-        # Process Qdrant response
-        if isinstance(qdrant_response, dict) and 'results' in qdrant_response:
-            created_memories = []
+        # 详细记录响应内容
+        logging.info("=" * 80)
+        logging.info(f"📊 [MEM0 RESPONSE] Mem0 响应详情:")
+        logging.info(f"   响应类型: {type(mem0_response)}")
+        
+        if isinstance(mem0_response, dict):
+            logging.info(f"   响应键: {list(mem0_response.keys())}")
             
-            for result in qdrant_response['results']:
-                if result['event'] == 'ADD':
-                    # Get the Qdrant-generated ID
-                    memory_id = UUID(result['id'])
+            # 检查向量存储结果
+            if 'results' in mem0_response:
+                results = mem0_response['results']
+                logging.info(f"   ✅ [VECTOR STORE] 向量存储结果: {len(results)} 条记录")
+                for i, result in enumerate(results, 1):
+                    logging.info(f"      结果 {i}: event={result.get('event')}, id={result.get('id')}, memory={result.get('memory', '')[:50]}...")
+            else:
+                logging.warning("   ⚠️  [VECTOR STORE] 响应中缺少 'results' 字段")
+            
+            # 检查图形存储结果
+            # mem0 master 分支返回格式: {"deleted_entities": [...], "added_entities": [...]}
+            if 'relations' in mem0_response:
+                relations = mem0_response.get('relations')
+                if relations:
+                    added_entities = relations.get('added_entities', [])
+                    deleted_entities = relations.get('deleted_entities', [])
+                    total_relations = len(added_entities) + len(deleted_entities)
                     
-                    # Check if memory already exists
-                    existing_memory = db.query(Memory).filter(Memory.id == memory_id).first()
-                    
-                    if existing_memory:
-                        # Update existing memory
-                        existing_memory.state = MemoryState.active
-                        existing_memory.content = result['memory']
-                        memory = existing_memory
+                    if total_relations > 0:
+                        logging.info(f"   ✅ [GRAPH STORE] 图形存储结果: {total_relations} 个关系")
+                        if added_entities:
+                            logging.info(f"      添加的实体: {len(added_entities)} 个")
+                            for i, rel in enumerate(added_entities[:3], 1):  # 只显示前3个
+                                logging.info(f"        关系 {i}: {rel}")
+                        if deleted_entities:
+                            logging.info(f"      删除的实体: {len(deleted_entities)} 个")
                     else:
-                        # Create memory with the EXACT SAME ID from Qdrant
-                        memory = Memory(
-                            id=memory_id,  # Use the same ID that Qdrant generated
-                            user_id=user.id,
-                            app_id=app_obj.id,
-                            content=result['memory'],
-                            metadata_=request.metadata,
-                            state=MemoryState.active
-                        )
-                        db.add(memory)
-                    
-                    # Create history entry
-                    history = MemoryStatusHistory(
+                        logging.warning("   ⚠️  [GRAPH STORE] relations 字段为空（可能未提取到关系）")
+                else:
+                    logging.warning("   ⚠️  [GRAPH STORE] relations 字段为空（可能未提取到关系）")
+            else:
+                logging.warning("   ⚠️  [GRAPH STORE] 响应中缺少 'relations' 字段（可能 graph store 未启用）")
+        else:
+            logging.warning(f"   ⚠️  响应格式异常: {mem0_response}")
+        
+        logging.info("=" * 80)
+        
+        # Process Mem0 response
+        if isinstance(mem0_response, dict) and 'results' in mem0_response:
+            created_memories = []
+            updated_memories = []
+            deleted_memories = []
+            skipped_memories = []
+            
+            logging.info("💾 [MYSQL DB] 开始写入 MySQL 数据库...")
+            logging.info(f"   待处理记录数: {len(mem0_response['results'])}")
+            
+            # 统计事件类型分布
+            event_types = {}
+            for result in mem0_response['results']:
+                event_type = result.get('event', 'UNKNOWN')
+                event_types[event_type] = event_types.get(event_type, 0) + 1
+            if event_types:
+                logging.info(f"   事件类型分布: {event_types}")
+            
+            for result in mem0_response['results']:
+                event_type = result.get('event')
+                memory_id = UUID(result['id'])
+                
+                logging.info(f"   📌 处理记忆 ID: {memory_id}, 事件类型: {event_type}")
+                
+                # 单个查询（使用主键索引）
+                existing_memory = db.query(Memory).filter(Memory.id == memory_id).first()
+                logging.info(f"      🔍 数据库查询结果: {'已存在' if existing_memory else '不存在'}")
+                
+                handler = EVENT_HANDLERS.get(event_type)
+                logging.info(f"      🔍 Handler 查找: event_type='{event_type}', handler={handler is not None}")
+                if handler:
+                    logging.info(f"      🔍 Handler 函数: {handler.__name__}")
+                
+                if not handler:
+                    logging.warning(f"   ⚠️  未知事件类型: {event_type}")
+                    logging.warning(f"      🔍 可用的事件类型: {list(EVENT_HANDLERS.keys())}")
+                    skipped_memories.append({'id': memory_id, 'event': event_type, 'reason': 'UNKNOWN_EVENT_TYPE'})
+                    continue
+                
+                logging.info(f"      🔍 调用 handler: {handler.__name__}")
+                try:
+                    memory, action = handler(
+                        result=result,
                         memory_id=memory_id,
-                        changed_by=user.id,
-                        old_state=MemoryState.deleted if existing_memory else MemoryState.deleted,
-                        new_state=MemoryState.active
+                        existing_memory=existing_memory,
+                        user=user,
+                        app_obj=app_obj,
+                        request=request,
+                        db=db
                     )
-                    db.add(history)
-                    
-                    created_memories.append(memory)
+                    logging.info(f"      ✅ Handler 返回: memory={memory is not None}, action='{action}'")
+                    logging.info(f"      🔍 Memory 对象: id={memory.id if memory else None}, content={memory.content[:50] if memory and memory.content else None}...")
+                except Exception as handler_error:
+                    logging.error(f"      ❌ Handler 执行失败: {handler_error}")
+                    import traceback
+                    logging.error(f"      ❌ 错误堆栈:\n{traceback.format_exc()}")
+                    skipped_memories.append({'id': memory_id, 'event': event_type, 'reason': f'HANDLER_ERROR: {str(handler_error)}'})
+                    continue
+                
+                action_memory_map = {
+                    "created": created_memories,
+                    "updated": updated_memories,
+                    "deleted": deleted_memories,
+                }
+                
+                logging.info(f"      🔍 Action 映射检查: action='{action}', 可用 actions: {list(action_memory_map.keys())}")
+                target_list = action_memory_map.get(action)
+                logging.info(f"      🔍 Target list 查找结果: {target_list is not None}, 类型: {type(target_list)}")
+                
+                if target_list is not None:
+                    logging.info(f"      ✅ 找到目标列表，准备添加 memory")
+                    target_list.append(memory)
+                    logging.info(f"      ✅ Memory 已添加到 {action} 列表，当前列表长度: {len(target_list)}")
+                else:
+                    reason = 'NOOP' if event_type == MEMORY_EVENT_NONE else 'UNKNOWN_EVENT_TYPE'
+                    logging.warning(f"      ⚠️  Action '{action}' 不在 action_memory_map 中，将被跳过")
+                    logging.warning(f"      🔍 原因: {reason}")
+                    skipped_memories.append({'id': memory_id, 'event': event_type, 'reason': reason})
             
             # Commit all changes at once
-            if created_memories:
+            total_changes = len(created_memories) + len(updated_memories) + len(deleted_memories)
+            total_processed = total_changes + len(skipped_memories)
+            
+            logging.info(f"   📊 处理统计:")
+            logging.info(f"      - 创建: {len(created_memories)} 条")
+            logging.info(f"      - 更新: {len(updated_memories)} 条")
+            logging.info(f"      - 删除: {len(deleted_memories)} 条")
+            logging.info(f"      - 跳过: {len(skipped_memories)} 条 (NONE/未知事件)")
+            logging.info(f"      - 总计: {total_processed} 条")
+            
+            if skipped_memories:
+                logging.info(f"   ⚠️  跳过的记录详情:")
+                for skipped in skipped_memories:
+                    logging.info(f"      - ID: {skipped['id']}, 事件: {skipped['event']}, 原因: {skipped['reason']}")
+            
+            if total_changes > 0:
+                logging.info(f"   💾 提交 {total_changes} 条记录到 MySQL...")
                 db.commit()
-                for memory in created_memories:
+                for memory in created_memories + updated_memories + deleted_memories:
                     db.refresh(memory)
                 
+                logging.info(f"✅ [MYSQL DB] MySQL 数据库写入完成")
+                logging.info(f"   ✅ 成功处理 {total_changes} 条记忆记录")
+                
+                # 验证图形存储数据（如果启用）
+                # mem0 master 分支返回格式: {"deleted_entities": [...], "added_entities": [...]}
+                if enable_graph and has_graph and 'relations' in mem0_response:
+                    relations = mem0_response.get('relations')
+                    if relations:
+                        added_entities = relations.get('added_entities', [])
+                        deleted_entities = relations.get('deleted_entities', [])
+                        total_relations = len(added_entities) + len(deleted_entities)
+                        
+                        if total_relations > 0:
+                            logging.info(f"✅ [GRAPH STORE] 图形存储写入成功，提取到 {total_relations} 个关系")
+                            logging.info(f"   添加的实体: {len(added_entities)} 个，删除的实体: {len(deleted_entities)} 个")
+                            logging.info("   💡 提示: 关系数据已保存到 Neo4j，可通过 Neo4j Browser 查询验证")
+                        else:
+                            logging.warning("⚠️  [GRAPH STORE] 图形存储响应为空（可能 LLM 未提取到关系）")
+                    else:
+                        logging.warning("⚠️  [GRAPH STORE] 图形存储响应为空（可能 LLM 未提取到关系）")
+                elif enable_graph and has_graph:
+                    logging.warning("⚠️  [GRAPH STORE] 图形存储未返回 relations（可能写入失败或超时）")
+                else:
+                    logging.info("ℹ️  [GRAPH STORE] 图形存储未启用")
+                
+                logging.info("=" * 80)
+                logging.info(f"✅ [MEMORY CREATE] 记忆创建完成")
+                logging.info("=" * 80)
+                
                 # Return the first memory (for API compatibility)
-                # but all memories are now saved to the database
-                return created_memories[0]
-    except Exception as qdrant_error:
-        logging.warning(f"Qdrant operation failed: {qdrant_error}.")
+                # Priority: created > updated > deleted
+                memory_lists = [
+                    ("created", created_memories),
+                    ("updated", updated_memories),
+                    ("deleted", deleted_memories),
+                ]
+                
+                for action, memory_list in memory_lists:
+                    if memory_list:
+                        return memory_list[0]
+                
+                logging.warning("⚠️  [MYSQL DB] 没有需要返回的记忆记录")
+                return None
+            else:
+                logging.warning("⚠️  [MYSQL DB] 没有需要保存的记忆记录")
+        else:
+            logging.error(f"❌ [MEM0 RESPONSE] 响应格式异常或缺少 'results' 字段")
+            logging.error(f"   响应内容: {mem0_response}")
+
+    except Exception as mem0_error:
+        import traceback
+        error_trace = traceback.format_exc()
+        logging.error("=" * 80)
+        logging.error(f"❌ [ERROR] Mem0 操作失败")
+        logging.error(f"   错误类型: {type(mem0_error).__name__}")
+        logging.error(f"   错误信息: {str(mem0_error)}")
+        logging.error(f"   错误堆栈:\n{error_trace}")
+        logging.error("=" * 80)
         # Return a json response with the error
         return {
-            "error": str(qdrant_error)
+            "error": str(mem0_error)
         }
 
 

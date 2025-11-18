@@ -1,0 +1,83 @@
+---
+title: Tencent Cloud VectorDB
+---
+
+[Tencent Cloud VectorDB](https://cloud.tencent.com/product/vdb) is a fully managed, enterprise-grade distributed vector database service developed by Tencent Cloud. It provides high-performance vector search capabilities with support for billion-scale vectors, million-level QPS, and millisecond-level query latency.
+
+### Usage
+
+```python
+import os
+from mem0 import Memory
+
+config = {
+    "vector_store": {
+        "provider": "tencent_vectordb",
+        "config": {
+            "url": "http://your-vectordb-endpoint",
+            "username": "your-username",
+            "key": "your-api-key",
+            "database_name": "mem0",
+            "collection_name": "mem0_collection",
+            "embedding_model_dims": 1536,
+            "metric_type": "cosine",
+            "timeout": 30
+        }
+    }
+}
+
+m = Memory.from_config(config)
+messages = [
+    {"role": "user", "content": "I'm planning to watch a movie tonight. Any recommendations?"},
+    {"role": "assistant", "content": "How about a thriller movie? They can be quite engaging."},
+    {"role": "user", "content": "I'm not a big fan of thriller movies but I love sci-fi movies."},
+    {"role": "assistant", "content": "Got it! I'll avoid thriller recommendations and suggest sci-fi movies in the future."}
+]
+m.add(messages, user_id="alice", metadata={"category": "movies"})
+```
+
+### Config
+
+Here are the parameters available for configuring Tencent Cloud VectorDB:
+
+| Parameter | Description | Default Value |
+| --- | --- | --- |
+| `url` | Connection URL for your Tencent Cloud VectorDB instance | Required |
+| `username` | Username for accessing Tencent Cloud VectorDB | Required |
+| `key` | API key for accessing Tencent Cloud VectorDB | Required |
+| `database_name` | Name of the database | `mem0` |
+| `collection_name` | Name of the collection | `mem0` |
+| `embedding_model_dims` | Dimensions of the embedding model | `1536` |
+| `metric_type` | Distance metric for similarity search | `cosine` |
+| `timeout` | Connection timeout in seconds | `30` |
+
+### Distance Metrics
+
+The following distance metrics are supported:
+
+- `cosine`: Cosine similarity (default)
+- `l2`: Euclidean distance (L2)
+- `ip`: Inner product
+
+### Index Configuration
+
+The vector index is automatically configured with the following HNSW parameters:
+
+- `m`: 16 (number of connections per element)
+- `efconstruction`: 200 (size of the dynamic candidate list)
+- `index_type`: HNSW (Hierarchical Navigable Small World)
+
+### Installation
+
+Before using Tencent Cloud VectorDB, you need to install the required SDK:
+
+```bash
+pip install tcvectordb
+```
+
+### References
+
+- [Tencent Cloud VectorDB Documentation](https://cloud.tencent.com/document/product/1709)
+- [Python SDK Documentation](https://cloud.tencent.com/document/product/1709/95819)
+- [HTTP API Documentation](https://cloud.tencent.com/document/product/1709/95836)
+

@@ -175,6 +175,7 @@ class VectorStoreFactory:
         "langchain": "mem0.vector_stores.langchain.Langchain",
         "s3_vectors": "mem0.vector_stores.s3_vectors.S3Vectors",
         "baidu": "mem0.vector_stores.baidu.BaiduDB",
+        "tencent_vectordb": "mem0.vector_stores.tencent_vectordb.TencentVectorDB",
     }
 
     @classmethod

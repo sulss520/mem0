@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.name="mem0/openmemory-mcp"
+LABEL org.opencontainers.image.name="mem0/openmemory-api"
 
 WORKDIR /usr/src/openmemory
 

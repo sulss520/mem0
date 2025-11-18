@@ -35,6 +35,45 @@ curl -sL https://raw.githubusercontent.com/mem0ai/mem0/main/openmemory/run.sh | 
 - Node.js (for frontend development)
 - OpenAI API Key (required for LLM interactions, run `cp api/.env.example api/.env` then change **OPENAI_API_KEY** to yours)
 
+## Development Environment Setup
+
+### Python Virtual Environment
+
+For local development, you need to set up a Python virtual environment:
+
+#### Method 1: Using Command Line
+
+```bash
+cd api
+python3 -m venv venv
+
+# Activate virtual environment
+source venv/bin/activate  # macOS/Linux
+# or
+venv\Scripts\activate  # Windows
+
+# Install dependencies (using Tencent Cloud mirror for faster download in China)
+pip install -r requirements.txt -i https://mirrors.cloud.tencent.com/pypi/simple --trusted-host mirrors.cloud.tencent.com
+```
+
+#### Method 2: Using PyCharm
+
+1. Open PyCharm and open the project directory: `/api`
+2. Configure Python Interpreter:
+   - `PyCharm` -> `Preferences` (macOS) or `File` -> `Settings` (Windows/Linux)
+   - Select `Project: api` -> `Python Interpreter`
+   - Click gear icon -> `Add...`
+   - Select `Virtualenv Environment` -> `New environment`
+   - Location: `/api/venv`
+   - Base interpreter: Select Python 3.9+ (recommended: Python 3.12+)
+   - Click `OK`
+3. PyCharm will automatically prompt to install requirements, or manually run:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+**Note**: Ensure Python version is 3.9 or higher. For Python 3.11+, you can use `datetime.UTC` directly.
+
 ## Quickstart
 
 ### 1. Set Up Environment Variables
