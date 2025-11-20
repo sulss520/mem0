@@ -1,20 +1,36 @@
 {
-    "mem0": {
-        "llm": {
-            "provider": "openai",
-            "config": {
-                "model": "gpt-4o-mini",
-                "temperature": 0.1,
-                "max_tokens": 2000,
-                "api_key": "env:API_KEY"
-            }
-        },
-        "embedder": {
-            "provider": "openai",
-            "config": {
-                "model": "text-embedding-3-small",
-                "api_key": "env:API_KEY"
-            }
-        }
+  "openmemory": {
+    "custom_instructions": ""
+  },
+  "mem0": {
+    "llm": {
+      "provider": "openai",
+      "config": {
+        "model": "gpt-4o-mini",
+        "api_key": "env:API_KEY",
+        "temperature": 0.1,
+        "max_tokens": 2000
+      }
+    },
+    "embedder": {
+      "provider": "openai",
+      "config": {
+        "model": "text-embedding-3-small",
+        "api_key": "env:API_KEY"
+      }
+    },
+    "vector_store": {
+      "provider": "tencent_vectordb",
+      "config": {
+        "url": "env:TENCENT_VECTORDB_URL",
+        "key": "env:TENCENT_VECTORDB_KEY",
+        "username": "env:TENCENT_VECTORDB_USERNAME",
+        "database_name": "openmemory",
+        "collection_name": "openmemory_collection",
+        "embedding_model_dims": 1536,
+        "metric_type": "cosine",
+        "timeout": 60
+      }
     }
+  }
 }

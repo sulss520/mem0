@@ -1,6 +1,10 @@
 import datetime
 from uuid import uuid4
 
+# 导入日志配置（必须在其他导入之前）
+from app.logging_config import logger, LOG_LEVEL
+import logging
+
 from app.config import DEFAULT_APP_ID, USER_ID
 from app.database import Base, SessionLocal, engine
 from app.mcp_server import setup_mcp_server
@@ -87,3 +91,30 @@ app.include_router(backup_router)
 
 # Add pagination support
 add_pagination(app)
+
+# 启动方法：可以直接运行 python main.py 启动服务
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    
+    # 从环境变量读取配置，默认值
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", 8765))
+    reload = os.getenv("RELOAD", "true").lower() == "true"
+    
+    logger.info("🚀 Starting OpenMemory API server...")
+    logger.info(f"📍 API URL: http://{host}:{port}")
+    logger.info(f"📚 API Docs: http://{host}:{port}/docs")
+    logger.info(f"🔄 Reload: {reload}")
+    
+    # uvicorn 的日志级别（使用小写）
+    uvicorn_log_level = LOG_LEVEL.lower()
+    
+    uvicorn.run(
+        "main:app",
+        host=host,
+        port=port,
+        reload=reload,
+        log_level=uvicorn_log_level,
+        log_config=None  # 使用我们自己的日志配置
+    )

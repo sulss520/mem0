@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import UTC, datetime
 from typing import List, Optional, Set
 from uuid import UUID
@@ -28,33 +29,42 @@ router = APIRouter(prefix="/api/v1/memories", tags=["memories"])
 
 
 def get_memory_or_404(db: Session, memory_id: UUID) -> Memory:
-    memory = db.query(Memory).filter(Memory.id == memory_id).first()
+    """Get memory by ID, converting UUID to string for String(36) column."""
+    # Convert UUID to string for String(36) column query
+    memory_id_str = str(memory_id)
+    memory = db.query(Memory).filter(Memory.id == memory_id_str).first()
     if not memory:
         raise HTTPException(status_code=404, detail="Memory not found")
     return memory
 
 
 def update_memory_state(db: Session, memory_id: UUID, new_state: MemoryState, user_id: UUID):
-    memory = get_memory_or_404(db, memory_id)
-    old_state = memory.state
+    """Update memory state and record history with proper error handling."""
+    try:
+        memory = get_memory_or_404(db, memory_id)
+        old_state = memory.state
 
-    # Update memory state
-    memory.state = new_state
-    if new_state == MemoryState.archived:
-        memory.archived_at = datetime.now(UTC)
-    elif new_state == MemoryState.deleted:
-        memory.deleted_at = datetime.now(UTC)
+        # Update memory state
+        memory.state = new_state
+        if new_state == MemoryState.archived:
+            memory.archived_at = datetime.now(UTC)
+        elif new_state == MemoryState.deleted:
+            memory.deleted_at = datetime.now(UTC)
 
-    # Record state change
-    history = MemoryStatusHistory(
-        memory_id=memory_id,
-        changed_by=user_id,
-        old_state=old_state,
-        new_state=new_state
-    )
-    db.add(history)
-    db.commit()
-    return memory
+        # Record state change - convert UUID to string for String(36) column
+        history = MemoryStatusHistory(
+            memory_id=str(memory_id),  # Convert UUID to string for String(36) column
+            changed_by=str(user_id),    # Convert UUID to string for String(36) column
+            old_state=old_state,
+            new_state=new_state
+        )
+        db.add(history)
+        db.commit()
+        return memory
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Failed to update memory state: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update memory state: {str(e)}")
 
 
 def get_accessible_memory_ids(db: Session, app_id: UUID) -> Set[UUID]:
@@ -229,24 +239,37 @@ async def create_memory(
     if not app_obj.is_active:
         raise HTTPException(status_code=403, detail=f"App {request.app} is currently paused on OpenMemory. Cannot create new memories.")
 
-    # Log what we're about to do
-    logging.info(f"Creating memory for user_id: {request.user_id} with app: {request.app}")
+    # ============================================================================
+    # 详细日志记录：Memory 创建流程
+    # ============================================================================
+    logging.info("=" * 60)
+    logging.info(f"📝 [Memory Creation] 开始创建 Memory")
+    logging.info(f"   User ID: {request.user_id}")
+    logging.info(f"   App: {request.app}")
+    logging.info(f"   Content: {request.text[:100]}..." if len(request.text) > 100 else f"   Content: {request.text}")
+    logging.info(f"   User DB ID: {user.id}")
+    logging.info(f"   App DB ID: {app_obj.id}")
     
     # Try to get memory client safely
     try:
+        logging.info("🔧 [Memory Client] 初始化 Memory Client...")
         memory_client = get_memory_client()
         if not memory_client:
             raise Exception("Memory client is not available")
+        logging.info("✅ [Memory Client] Memory Client 初始化成功")
     except Exception as client_error:
-        logging.warning(f"Memory client unavailable: {client_error}. Creating memory in database only.")
-        # Return a json response with the error
+        logging.error(f"❌ [Memory Client] Memory Client 初始化失败: {client_error}")
+        logging.warning("⚠️  [Memory Client] 无法创建 Memory，仅保存到数据库")
         return {
             "error": str(client_error)
         }
 
-    # Try to save to Qdrant via memory_client
+    # Try to save to vector store via memory_client
     try:
-        qdrant_response = memory_client.add(
+        logging.info("📦 [Vector Store] 开始保存到向量数据库...")
+        logging.info(f"   Provider: {os.getenv('VECTOR_STORE_PROVIDER', 'unknown')}")
+        
+        vector_store_response = memory_client.add(
             request.text,
             user_id=request.user_id,  # Use string user_id to match search
             metadata={
@@ -255,30 +278,37 @@ async def create_memory(
             }
         )
         
-        # Log the response for debugging
-        logging.info(f"Qdrant response: {qdrant_response}")
+        logging.info("✅ [Vector Store] 向量数据库保存成功")
+        logging.info(f"   Response: {vector_store_response}")
         
-        # Process Qdrant response
-        if isinstance(qdrant_response, dict) and 'results' in qdrant_response:
+        # Process vector store response
+        if isinstance(vector_store_response, dict) and 'results' in vector_store_response:
             created_memories = []
             
-            for result in qdrant_response['results']:
+            logging.info(f"📊 [Vector Store] 处理 {len(vector_store_response['results'])} 个结果")
+            
+            for idx, result in enumerate(vector_store_response['results']):
                 if result['event'] == 'ADD':
-                    # Get the Qdrant-generated ID
-                    memory_id = UUID(result['id'])
+                    # Get the vector store-generated ID and convert to string
+                    memory_id_str = str(result['id'])  # Convert UUID to string for String(36) column
+                    
+                    logging.info(f"🆔 [Memory ID] 向量数据库生成的 ID: {memory_id_str}")
                     
                     # Check if memory already exists
-                    existing_memory = db.query(Memory).filter(Memory.id == memory_id).first()
+                    existing_memory = db.query(Memory).filter(Memory.id == memory_id_str).first()
                     
                     if existing_memory:
+                        logging.info(f"🔄 [MySQL] Memory 已存在，更新现有记录 (ID: {memory_id_str})")
                         # Update existing memory
                         existing_memory.state = MemoryState.active
                         existing_memory.content = result['memory']
                         memory = existing_memory
+                        logging.info(f"   ✅ Memory 更新已添加到 Session")
                     else:
-                        # Create memory with the EXACT SAME ID from Qdrant
+                        logging.info(f"➕ [MySQL] 创建新的 Memory 记录 (ID: {memory_id_str})")
+                        # Create memory with the EXACT SAME ID from vector store
                         memory = Memory(
-                            id=memory_id,  # Use the same ID that Qdrant generated
+                            id=memory_id_str,  # Use string ID for String(36) column
                             user_id=user.id,
                             app_id=app_obj.id,
                             content=result['memory'],
@@ -286,33 +316,67 @@ async def create_memory(
                             state=MemoryState.active
                         )
                         db.add(memory)
+                        logging.info(f"   ✅ Memory 对象已添加到 Session")
                     
-                    # Create history entry
+                    # Create history entry (use string for String(36) column)
+                    # 注意：已移除外键约束，不再需要 flush 来保证顺序
+                    logging.info(f"📜 [MySQL] 创建状态历史记录 (Memory ID: {memory_id_str})")
+                    # 修复：根据实际情况设置old_state
+                    old_state = existing_memory.state if existing_memory else MemoryState.deleted
                     history = MemoryStatusHistory(
-                        memory_id=memory_id,
+                        memory_id=memory_id_str,  # History table uses String(36) type
                         changed_by=user.id,
-                        old_state=MemoryState.deleted if existing_memory else MemoryState.deleted,
+                        old_state=old_state,
                         new_state=MemoryState.active
                     )
                     db.add(history)
+                    logging.info(f"   ✅ History 对象已添加到 Session")
                     
                     created_memories.append(memory)
             
             # Commit all changes at once
             if created_memories:
-                db.commit()
-                for memory in created_memories:
-                    db.refresh(memory)
-                
-                # Return the first memory (for API compatibility)
-                # but all memories are now saved to the database
-                return created_memories[0]
-    except Exception as qdrant_error:
-        logging.warning(f"Qdrant operation failed: {qdrant_error}.")
-        # Return a json response with the error
-        return {
-            "error": str(qdrant_error)
-        }
+                try:
+                    logging.info(f"💾 [MySQL] 提交事务，保存 {len(created_memories)} 个 Memory 到数据库...")
+                    db.commit()
+                    logging.info("✅ [MySQL] 事务提交成功")
+                    
+                    for memory in created_memories:
+                        db.refresh(memory)
+                        logging.info(f"   ✅ Memory (ID: {memory.id}) 已刷新")
+                    
+                    logging.info("=" * 60)
+                    logging.info(f"🎉 [Memory Creation] Memory 创建完成 (ID: {created_memories[0].id})")
+                    logging.info("=" * 60)
+                    
+                    # Return the first memory (for API compatibility)
+                    # but all memories are now saved to the database
+                    return created_memories[0]
+                except Exception as commit_error:
+                    logging.error("=" * 60)
+                    logging.error(f"❌ [MySQL] 事务提交失败")
+                    logging.error(f"   Error: {commit_error}")
+                    logging.error("=" * 60)
+                    db.rollback()
+                    logging.info("🔄 [MySQL] 事务已回滚")
+                    import traceback
+                    logging.error(traceback.format_exc())
+                    raise HTTPException(status_code=500, detail=f"Database commit failed: {commit_error}")
+            else:
+                logging.warning("⚠️  [Memory Creation] 没有需要保存的 Memory")
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as vector_store_error:
+        logging.error("=" * 60)
+        logging.error(f"❌ [Vector Store] 向量数据库操作失败")
+        logging.error(f"   Error: {vector_store_error}")
+        logging.error("=" * 60)
+        db.rollback()
+        logging.info("🔄 [MySQL] 事务已回滚")
+        import traceback
+        logging.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Vector store operation failed: {vector_store_error}")
 
 
 
